@@ -14,7 +14,7 @@ create table game_field
   j varchar(1) default '.'
 );
 
-insert into game_field (id) values (1), (2), (3), (4), (5), (6), (7), (8), (9), (10);
+insert into game_field (id) values (0), (1), (2), (3), (4), (5), (6), (7), (8), (9);
 
 drop table if exists game_event;
 create table game_event
@@ -23,6 +23,16 @@ create table game_event
   player text not null,
   event text not null,
   cell text default null
+);
+
+drop table if exists game_ships;
+create table game_ships
+(
+  id serial,
+  start_cell text,
+  end_cell text,
+  length int,
+  health int
 );
 
 create or replace function game_create() returns text
@@ -35,6 +45,8 @@ begin
 
     execute 'create table game_field_' || game_id || '_a as select * from game_field;';
     execute 'create table game_field_' || game_id || '_b as select * from game_field;';
+    execute 'create table game_ships_' || game_id || '_a as select * from game_ships;';
+    execute 'create table game_ships_' || game_id || '_b as select * from game_ships;';
     execute 'create table game_event_' || game_id || ' as table game_event with no data;';
     execute 'insert into game_event_' || game_id || ' (player, event) values (''a'', ''connected'');';
 
@@ -66,6 +78,24 @@ begin
     loop
         execute 'select count(*) from game_event_' || game_id || ' where event = ''connected'' and player = ''b'';' into c;
         if c > 0 then
+            exit;
+        end if;
+        perform pg_sleep(1);
+    end loop;
+end;
+$$;
+
+
+
+create or replace procedure game_wait_for_ready(game_id text)
+language plpgsql
+as $$
+declare
+    c int;
+begin
+    loop
+        execute 'select count(*) from game_event_' || game_id || ' where event = ''ready'';' into c;
+        if c = 2 then
             exit;
         end if;
         perform pg_sleep(1);
@@ -110,7 +140,6 @@ declare
     row_to text;
     cell text;
 begin
-    raise notice 'from % to %', from_cell, to_cell;
     select substr(from_cell, 1, 1) into col_from;
     select substr(from_cell, 2, 1) into row_from;
     select substr(to_cell, 1, 1) into col_to;
@@ -119,7 +148,6 @@ begin
     for i in ascii(col_from)..ascii(col_to) loop
         for j in row_from..row_to loop
             select format('%s%s', chr(i), j) into cell;
-            raise notice 'Placing to cell %', cell;
             call game_place_cell(game_id, player, cell, data);
         end loop;
     end loop;
@@ -133,13 +161,27 @@ language plpgsql
 as $$
 declare
     request text;
+    ship_len int;
+    ships int;
 begin
-   loop
+    loop
        commit;
        call game_print_single_field(game_id, player);
+
+       raise info '';
+       raise info 'You can place:';
+       execute format('select 4 - count(*) from game_ships_%s_%s where length = 1;', game_id, player) into ships;
+       raise info '    S    x%', ships;
+       execute format('select 3 - count(*) from game_ships_%s_%s where length = 2;', game_id, player)  into ships;
+       raise info '    SS   x%', ships;
+       execute format('select 2 - count(*) from game_ships_%s_%s where length = 3;', game_id, player)  into ships;
+       raise info '    SSS  x%', ships;
+       execute format('select 1 - count(*) from game_ships_%s_%s where length = 4;', game_id, player)  into ships;
+       raise info '    SSSS x%', ships;
+
        select keyboard_read(keyboard_session_id) into request;
        if length(request) <> 6 then
-           raise notice 'incorrect length';
+           raise warning 'incorrect length';
            perform pg_sleep(1);
            continue;
        end if;
@@ -147,13 +189,40 @@ begin
        -- 123456
        -- B1 B4;
        if substr(request, 1, 1) <> substr(request, 4, 1) and substr(request, 2, 1) <> substr(request, 5, 1) then
-           raise notice 'incorrect ship';
+           raise warning 'incorrect ship';
            perform pg_sleep(1);
            continue;
        end if;
 
+       select
+              greatest(
+                  ascii(substr(request, 4, 1)) - ascii(substr(request, 1, 1)),
+                  ascii(substr(request, 5, 1)) - ascii(substr(request, 2, 1))
+              ) + 1
+       into ship_len;
+
+       if ship_len > 4 then
+           raise warning 'length of ship must be less than 5, % provided', ship_len;
+           continue;
+       end if;
+
+       execute format('select (5 - %s) - count(*) from game_ships_%s_%s where length = %s;', ship_len, game_id, player, ship_len) into ships;
+
+       if ships < 1 then
+           raise warning 'No such ships';
+           continue;
+       end if;
+
+       execute format('insert into game_ships_%s_%s (start_cell, end_cell, length, health) VALUES (''%s'', ''%s'', %s, %s);', game_id, player, substr(request, 1, 2), substr(request, 4, 2), ship_len, ship_len);
+
        call game_place_rect(game_id, player, substr(request, 1, 2), substr(request, 4, 2), 'S');
 
-   end loop;
+       execute format('select count(*) from game_ships_%s_%s', game_id, player)  into ships;
+       if ships = 4 + 3 + 2 + 1 then
+           execute format('insert into game_event_%s (player, event) values (''%s'', ''ready'');', game_id, player);
+           commit;
+           exit;
+       end if;
+    end loop;
 end
 $$;

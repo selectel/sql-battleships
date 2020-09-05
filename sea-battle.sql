@@ -39,7 +39,12 @@ begin
     end loop;
 
     raise info 'Placing ships phase...';
+    raise info '';
 
     call game_place_ships_loop(keyboard_session_id, game_id, player);
+
+    call game_wait_for_ready(game_id);
+
+    raise info 'All players are ready!';
 end
 $$;
