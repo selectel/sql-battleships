@@ -53,6 +53,7 @@ begin
         raise exception 'No such game!';
     end if;
     execute 'insert into game_event_' || game_id || ' (player, event) values (''b'', ''connected'');';
+    commit;
 end
 $$;
 
@@ -70,4 +71,89 @@ begin
         perform pg_sleep(1);
     end loop;
 end;
+$$;
+
+create or replace procedure game_print_single_field(game_id text, player text)
+language plpgsql
+as $$
+declare
+    r record;
+begin
+    raise info '.. A B C D E F G H I J';
+    for r in execute 'select * from game_field_' || game_id || '_' || player || ' order by id' loop
+        raise info '% % % % % % % % % % %', format('%2s', r.id), r.A, r.B, r.C, r.D, r.E, r.F, r.G, r.H, r.I, r.J;
+    end loop;
+end
+$$;
+
+create or replace procedure game_place_cell(game_id text, player text, cell text, data text)
+language plpgsql
+as $$
+declare
+    col text;
+    row text;
+begin
+    select substr(cell, 1, 1) into col;
+    select substr(cell, 2, 1) into row;
+
+    execute format('update game_field_%s_%s set %s = ''%s'' where id = %s', game_id, player, col, data, row);
+end
+$$;
+
+create or replace procedure game_place_rect(game_id text, player text, from_cell text, to_cell text, data text)
+language plpgsql
+as $$
+declare
+    col_from text;
+    col_to text;
+    row_from text;
+    row_to text;
+    cell text;
+begin
+    raise notice 'from % to %', from_cell, to_cell;
+    select substr(from_cell, 1, 1) into col_from;
+    select substr(from_cell, 2, 1) into row_from;
+    select substr(to_cell, 1, 1) into col_to;
+    select substr(to_cell, 2, 1) into row_to;
+
+    for i in ascii(col_from)..ascii(col_to) loop
+        for j in row_from..row_to loop
+            select format('%s%s', chr(i), j) into cell;
+            raise notice 'Placing to cell %', cell;
+            call game_place_cell(game_id, player, cell, data);
+        end loop;
+    end loop;
+end
+$$;
+
+
+
+create or replace procedure game_place_ships_loop(keyboard_session_id text, game_id text, player text)
+language plpgsql
+as $$
+declare
+    request text;
+begin
+   loop
+       commit;
+       call game_print_single_field(game_id, player);
+       select keyboard_read(keyboard_session_id) into request;
+       if length(request) <> 6 then
+           raise notice 'incorrect length';
+           perform pg_sleep(1);
+           continue;
+       end if;
+
+       -- 123456
+       -- B1 B4;
+       if substr(request, 1, 1) <> substr(request, 4, 1) and substr(request, 2, 1) <> substr(request, 5, 1) then
+           raise notice 'incorrect ship';
+           perform pg_sleep(1);
+           continue;
+       end if;
+
+       call game_place_rect(game_id, player, substr(request, 1, 2), substr(request, 4, 2), 'S');
+
+   end loop;
+end
 $$;

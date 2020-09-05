@@ -5,8 +5,13 @@ declare
     keyboard_session_id text;
     game_id text;
     txt text;
+    player text;
 begin
     select keyboard_init() into keyboard_session_id;
+
+    raise info '';
+    raise info 'new game;          -- create new game server';
+    raise info 'connect <game-id>; -- connect to existing game server';
 
     loop
         select keyboard_read(keyboard_session_id) into txt;
@@ -16,7 +21,10 @@ begin
             select game_create() into game_id;
             commit;
             raise info 'Game ID: %', game_id;
+            raise info '';
+            raise info 'Waiting for opponent...';
             call game_wait_for_opponent(game_id);
+            select 'a' into player;
             exit;
         end if;
 
@@ -25,10 +33,13 @@ begin
             raise info 'Connecting to %...', game_id;
             call game_connect(game_id);
             raise info 'Connected!';
+            select 'b' into player;
             exit;
         end if;
     end loop;
 
-    raise info 'Game started!';
+    raise info 'Placing ships phase...';
+
+    call game_place_ships_loop(keyboard_session_id, game_id, player);
 end
 $$;
