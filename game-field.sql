@@ -108,10 +108,29 @@ language plpgsql
 as $$
 declare
     r record;
+    ships int;
+    additional text := '';
 begin
     raise info '.. A B C D E F G H I J';
     for r in execute 'select * from game_field_' || game_id || '_' || player || ' order by id' loop
-        raise info '% % % % % % % % % % %', format('%2s', r.id), r.A, r.B, r.C, r.D, r.E, r.F, r.G, r.H, r.I, r.J;
+        select '' into additional;
+        if r.id = 3 then
+            execute format('select count(*) from game_ships_%s_%s', game_id, player) into ships;
+            if ships = 4 + 3 + 2 + 1 then
+                select '     You: READY' into additional;
+            else
+                select '     You: Preparing...' into additional;
+            end if;
+        end if;
+        if r.id = 4 then
+            execute format('select count(*) from game_ships_%s_%s', game_id, chr(ascii('a') + (ascii('b') - ascii(player)))) into ships;
+            if ships = 4 + 3 + 2 + 1 then
+                select 'Opponent: READY' into additional;
+            else
+                select 'Opponent: Preparing...' into additional;
+            end if;
+        end if;
+        raise info '% % % % % % % % % % % %', format('%2s', r.id), r.A, r.B, r.C, r.D, r.E, r.F, r.G, r.H, r.I, r.J, additional;
     end loop;
 end
 $$;
@@ -169,6 +188,13 @@ begin
        commit;
        call game_print_single_field(game_id, player);
 
+       execute format('select count(*) from game_ships_%s_%s', game_id, player) into ships;
+       if ships = 4 + 3 + 2 + 1 then
+           execute format('insert into game_event_%s (player, event) values (''%s'', ''ready'');', game_id, player);
+           commit;
+           exit;
+       end if;
+
        raise info '';
        raise info 'You can place:';
        execute format('select 4 - count(*) from game_ships_%s_%s where length = 1;', game_id, player) into ships;
@@ -179,6 +205,8 @@ begin
        raise info '    SSS  x%', ships;
        execute format('select 1 - count(*) from game_ships_%s_%s where length = 4;', game_id, player)  into ships;
        raise info '    SSSS x%', ships;
+       raise info '';
+       raise info 'Place ship with command "<start> <end>;". For example, "B2 B4;"';
 
        select keyboard_read(keyboard_session_id) into request;
        if length(request) <> 6 then
@@ -225,12 +253,6 @@ begin
 
        call game_place_rect(game_id, player, substr(request, 1, 2), substr(request, 4, 2), 'S');
 
-       execute format('select count(*) from game_ships_%s_%s', game_id, player)  into ships;
-       if ships = 4 + 3 + 2 + 1 then
-           execute format('insert into game_event_%s (player, event) values (''%s'', ''ready'');', game_id, player);
-           commit;
-           exit;
-       end if;
     end loop;
 end
 $$;
