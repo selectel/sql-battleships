@@ -145,8 +145,8 @@ begin
     select substr(to_cell, 1, 1) into col_to;
     select substr(to_cell, 2, 1) into row_to;
 
-    for i in ascii(col_from)..ascii(col_to) loop
-        for j in row_from..row_to loop
+    for i in least(ascii(col_from), ascii(col_to))..greatest(ascii(col_from), ascii(col_to)) loop
+        for j in least(row_from, row_to)..greatest(row_from, row_to) loop
             select format('%s%s', chr(i), j) into cell;
             call game_place_cell(game_id, player, cell, data);
         end loop;
@@ -163,6 +163,7 @@ declare
     request text;
     ship_len int;
     ships int;
+    can_place bool;
 begin
     loop
        commit;
@@ -196,8 +197,8 @@ begin
 
        select
               greatest(
-                  ascii(substr(request, 4, 1)) - ascii(substr(request, 1, 1)),
-                  ascii(substr(request, 5, 1)) - ascii(substr(request, 2, 1))
+                  abs(ascii(substr(request, 4, 1)) - ascii(substr(request, 1, 1))),
+                  abs(ascii(substr(request, 5, 1)) - ascii(substr(request, 2, 1)))
               ) + 1
        into ship_len;
 
@@ -213,6 +214,13 @@ begin
            continue;
        end if;
 
+       select game_check_ship_placement(game_id, player, substr(request, 1, 2), substr(request, 4, 2)) into can_place;
+
+       if can_place = false then
+           raise warning 'Can''t place ship here!';
+           continue;
+       end if;
+
        execute format('insert into game_ships_%s_%s (start_cell, end_cell, length, health) VALUES (''%s'', ''%s'', %s, %s);', game_id, player, substr(request, 1, 2), substr(request, 4, 2), ship_len, ship_len);
 
        call game_place_rect(game_id, player, substr(request, 1, 2), substr(request, 4, 2), 'S');
@@ -224,5 +232,32 @@ begin
            exit;
        end if;
     end loop;
+end
+$$;
+
+create or replace function game_check_ship_placement(game_id text, player text, from_cell text, to_cell text) returns bool
+language plpgsql
+as $$
+declare
+    col_from text;
+    col_to text;
+    row_from int;
+    row_to int;
+    cell_data text;
+begin
+    select substr(from_cell, 1, 1) into col_from;
+    select substr(from_cell, 2, 1) into row_from;
+    select substr(to_cell, 1, 1) into col_to;
+    select substr(to_cell, 2, 1) into row_to;
+
+    for i in greatest(least(ascii(col_from)-1, ascii(col_to)-1), ascii('A'))..least(greatest(ascii(col_from)+1, ascii(col_to)+1), ascii('J')) loop
+        for j in greatest(least(row_from-1, row_to-1), 0)..least(greatest(row_from+1, row_to+1), 9) loop
+            execute format('select %s from game_field_%s_%s where id = %s', chr(i), game_id, player, j) into cell_data;
+            if cell_data <> '.' then
+                return false;
+            end if;
+        end loop;
+    end loop;
+    return true;
 end
 $$;
