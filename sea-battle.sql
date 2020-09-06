@@ -46,6 +46,8 @@ begin
     call game_wait_for_ready(game_id);
 
     raise info 'All players are ready!';
+    raise info 'Battle begins in several seconds...!';
+    perform pg_sleep(2);
 
     call game_battlefield_loop(keyboard_session_id, game_id, player);
 end

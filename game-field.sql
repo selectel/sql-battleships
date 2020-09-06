@@ -48,7 +48,7 @@ begin
     execute 'create table game_ships_' || game_id || '_a as select * from game_ships;';
     execute 'create table game_ships_' || game_id || '_b as select * from game_ships;';
     execute 'create table game_event_' || game_id || ' as table game_event with no data;';
-    execute 'insert into game_event_' || game_id || ' (player, event) values (''a'', ''connected'');';
+    execute 'insert into game_event_' || game_id || ' (id, player, event) values (now(), ''a'', ''connected'');';
 
     return game_id;
 end
@@ -65,7 +65,7 @@ begin
         raise exception 'No such game!';
     end if;
     commit;
-    execute 'insert into game_event_' || game_id || ' (player, event) values (''b'', ''connected'');';
+    execute 'insert into game_event_' || game_id || ' (id, player, event) values (now(), ''b'', ''connected'');';
     commit;
 end
 $$;
@@ -190,7 +190,7 @@ begin
        execute format('select count(*) from game_ships_%s_%s', game_id, player) into ships;
        if ships = 4 + 3 + 2 + 1 then
            commit;
-           execute format('insert into game_event_%s (player, event) values (''%s'', ''ready'');', game_id, player);
+           execute format('insert into game_event_%s (id, player, event) values (now(), ''%s'', ''ready'');', game_id, player);
            commit;
            exit;
        end if;
@@ -291,8 +291,10 @@ declare
     r record;
     a text;
     b text;
+    additional text;
+    event record;
 begin
-    raise info '. A B C D E F G H I J | . A B C D E F G H I J';
+    raise info '. A B C D E F G H I J  |  . A B C D E F G H I J';
     for r in execute format(
         'select
             a.id as id, a.a as aa, a.b as ab, a.c as ac, a.d as ad, a.e as ae, a.f as af, a.g as ag, a.h as ah, a.i as ai, a.j as aj,
@@ -305,11 +307,25 @@ begin
 
         select format('%s %s %s %s %s %s %s %s %s %s %s', r.id, r.aa, r.ab, r.ac, r.ad, r.ae, r.af, r.ag, r.ah, r.ai, r.aj) into a;
         select format('%s %s %s %s %s %s %s %s %s %s %s', r.id, r.ba, r.bb, r.bc, r.bd, r.be, r.bf, r.bg, r.bh, r.bi, r.bj) into b;
+        select '' into additional;
+
+        if r.id = 4 then
+            select '   Last move:' into additional;
+        end if;
+
+        if r.id = 5 then
+            execute format('select player, event, cell from game_event_%s order by id desc', game_id) into event;
+            if player = event.player then
+                select format('   You %s (%s)', event.event, event.cell) into additional;
+            else
+                select format('   Opponent %s (%s)', event.event, event.cell) into additional;
+            end if;
+        end if;
 
         if player = 'a' then
-            raise info '% | %', a, replace(b, 'S', '.');
+            raise info '%  |  % %', a, replace(b, 'S', '.'), additional;
         else
-            raise info '% | %', b, replace(a, 'S', '.');
+            raise info '%  |  % %', b, replace(a, 'S', '.'), additional;
         end if;
     end loop;
 end
@@ -319,11 +335,119 @@ create or replace procedure game_battlefield_loop(keyboard_session_id text, game
 language plpgsql
 as $$
 declare
+    opponent text;
+    turn text;
     request text;
-    ship_len int;
-    ships int;
-    can_place bool;
+    health int;
 begin
+    select chr(ascii('a') + ascii('b') - ascii(player)) into opponent;
 
+    loop
+        commit;
+
+        call game_print_battle_field(game_id, player);
+
+        execute format('select player from game_event_%s order by id desc limit 1', game_id) into turn;
+        if turn = player then
+            -- we performed last turn. Waiting for opponent...
+            raise info '';
+            raise info 'Waiting for opponent...';
+            loop
+                execute format('select player from game_event_%s order by id desc limit 1', game_id) into turn;
+                if turn <> player then
+                    exit;
+                end if;
+            end loop;
+        else
+            -- Let's go
+            raise info '';
+            raise info 'Shoot with command "<cell>;". For example, C1;';
+
+            select keyboard_read(keyboard_session_id) into request;
+
+            if length(request) <> 3 then
+                raise warning 'Incorrect cell';
+                continue;
+            end if;
+
+            call game_shoot(game_id, player, opponent, substr(request, 1, 2));
+        end if;
+
+        execute format('select sum(health) from game_ships_%s_%s', game_id, player) into health;
+        if health = 0 then
+            raise info '';
+            raise info '';
+            raise info 'You lose!';
+
+            execute format('drop table game_event_%s;', game_id);
+            execute format('drop table game_field_%s_a;', game_id);
+            execute format('drop table game_field_%s_b;', game_id);
+            execute format('drop table game_ships_%s_a;', game_id);
+            execute format('drop table game_ships_%s_b;', game_id);
+
+            exit;
+        end if;
+
+        execute format('select sum(health) from game_ships_%s_%s', game_id, opponent) into health;
+        if health = 0 then
+            raise info '';
+            raise info '';
+            raise info 'You win!';
+            exit;
+        end if;
+
+    end loop;
+end
+$$;
+
+create or replace procedure game_shoot(game_id text, player text, opponent text, cell text)
+language plpgsql
+as $$
+declare
+    event text;
+    col text;
+    row text;
+    cell_data text;
+    health int;
+begin
+    commit;
+    select substr(cell, 1, 1) into col;
+    select substr(cell, 2, 1) into row;
+    execute format('select %s from game_field_%s_%s where id = %s', col, game_id, opponent, row) into cell_data;
+    if cell_data = 'S' then
+        execute format('update game_field_%s_%s set %s = ''x'' where id = %s', game_id, opponent, col, row);
+
+        execute format(
+            'update
+                 game_ships_%s_%s t
+            set
+                health = health - 1
+            where
+                substr(t.start_cell, 1, 1) <= ''%s'' and ''%s'' <= substr(t.end_cell, 1, 1) and
+                substr(t.start_cell, 2, 1) <= ''%s'' and ''%s'' <= substr(t.end_cell, 2, 1);'
+        , game_id, opponent, col, col, row, row);
+
+        execute format(
+            'select
+                health
+            from
+                game_ships_%s_%s t
+            where
+                substr(t.start_cell, 1, 1) <= ''%s'' and ''%s'' <= substr(t.end_cell, 1, 1) and
+                substr(t.start_cell, 2, 1) <= ''%s'' and ''%s'' <= substr(t.end_cell, 2, 1);'
+        , game_id, opponent, col, col, row, row) into health;
+
+        if health = 0 then
+            select 'killed' into event;
+        else
+            select 'damaged' into event;
+        end if;
+    else
+        execute format('update game_field_%s_%s set %s = ''*'' where id = %s', game_id, opponent, col, row);
+        select 'missed' into event;
+    end if;
+
+    execute format('insert into game_event_%s (id, player, event, cell) values (now(), ''%s'', ''%s'', ''%s'');', game_id, player, event, cell);
+    commit;
 end
 $$;
