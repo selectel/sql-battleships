@@ -46,5 +46,7 @@ begin
     call game_wait_for_ready(game_id);
 
     raise info 'All players are ready!';
+
+    call game_battlefield_loop(keyboard_session_id, game_id, player);
 end
 $$;

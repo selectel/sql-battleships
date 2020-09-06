@@ -19,7 +19,7 @@ insert into game_field (id) values (0), (1), (2), (3), (4), (5), (6), (7), (8), 
 drop table if exists game_event;
 create table game_event
 (
-  id serial,
+  id timestamp default now(),
   player text not null,
   event text not null,
   cell text default null
@@ -64,6 +64,7 @@ begin
     if table_exists = false then
         raise exception 'No such game!';
     end if;
+    commit;
     execute 'insert into game_event_' || game_id || ' (player, event) values (''b'', ''connected'');';
     commit;
 end
@@ -173,8 +174,6 @@ begin
 end
 $$;
 
-
-
 create or replace procedure game_place_ships_loop(keyboard_session_id text, game_id text, player text)
 language plpgsql
 as $$
@@ -190,6 +189,7 @@ begin
 
        execute format('select count(*) from game_ships_%s_%s', game_id, player) into ships;
        if ships = 4 + 3 + 2 + 1 then
+           commit;
            execute format('insert into game_event_%s (player, event) values (''%s'', ''ready'');', game_id, player);
            commit;
            exit;
@@ -281,5 +281,49 @@ begin
         end loop;
     end loop;
     return true;
+end
+$$;
+
+create or replace procedure game_print_battle_field(game_id text, player text)
+language plpgsql
+as $$
+declare
+    r record;
+    a text;
+    b text;
+begin
+    raise info '. A B C D E F G H I J | . A B C D E F G H I J';
+    for r in execute format(
+        'select
+            a.id as id, a.a as aa, a.b as ab, a.c as ac, a.d as ad, a.e as ae, a.f as af, a.g as ag, a.h as ah, a.i as ai, a.j as aj,
+            b.a as ba, b.b as bb, b.c as bc, b.d as bd, b.e as be, b.f as bf, b.g as bg, b.h as bh, b.i as bi, b.j as bj
+        from
+            game_field_%s_a a,
+            game_field_%s_b b
+        where a.id = b.id order by id;'
+    , game_id, game_id) loop
+
+        select format('%s %s %s %s %s %s %s %s %s %s %s', r.id, r.aa, r.ab, r.ac, r.ad, r.ae, r.af, r.ag, r.ah, r.ai, r.aj) into a;
+        select format('%s %s %s %s %s %s %s %s %s %s %s', r.id, r.ba, r.bb, r.bc, r.bd, r.be, r.bf, r.bg, r.bh, r.bi, r.bj) into b;
+
+        if player = 'a' then
+            raise info '% | %', a, replace(b, 'S', '.');
+        else
+            raise info '% | %', b, replace(a, 'S', '.');
+        end if;
+    end loop;
+end
+$$;
+
+create or replace procedure game_battlefield_loop(keyboard_session_id text, game_id text, player text)
+language plpgsql
+as $$
+declare
+    request text;
+    ship_len int;
+    ships int;
+    can_place bool;
+begin
+
 end
 $$;
