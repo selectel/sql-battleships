@@ -206,7 +206,7 @@ begin
        execute format('select 1 - count(*) from game_ships_%s_%s where length = 4;', game_id, player)  into ships;
        raise info '    SSSS x%', ships;
        raise info '';
-       raise info 'Place ship with command "<start> <end>;". For example, "B2 B4;"';
+       raise info 'Place ship with command "<start> <end>;". For example, B2 B4;';
 
        select keyboard_read(keyboard_session_id) into request;
        if length(request) <> 6 then
@@ -363,9 +363,14 @@ begin
             raise info '';
             raise info 'Shoot with command "<cell>;". For example, C1;';
 
-            select keyboard_read(keyboard_session_id) into request;
+            select upper(keyboard_read(keyboard_session_id)) into request;
 
             if length(request) <> 3 then
+                raise warning 'Incorrect cell';
+                continue;
+            end if;
+
+            if not ('A' <= substr(request, 1, 1) and substr(request, 1, 1) <= 'J') then
                 raise warning 'Incorrect cell';
                 continue;
             end if;
