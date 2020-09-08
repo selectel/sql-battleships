@@ -37,7 +37,7 @@ begin
     SELECT *
     FROM postgres_log
     WITH NO DATA;
-    COPY tmp_table FROM '/var/lib/postgresql/12/main/pg_log/postgresql.csv' WITH csv;
+    COPY tmp_table FROM '/var/lib/postgresql/data/pg_log/postgresql.csv' WITH csv;
 
     INSERT INTO postgres_log
     SELECT *
