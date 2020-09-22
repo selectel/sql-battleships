@@ -294,6 +294,11 @@ declare
     additional text;
     event record;
 begin
+    raise info '';
+    raise info '';
+    raise info '';
+    raise info '';
+    raise info '';
     raise info '. A B C D E F G H I J  |  . A B C D E F G H I J';
     for r in execute format(
         'select
